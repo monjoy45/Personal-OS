@@ -1,0 +1,23 @@
+-- Run in the Supabase SQL editor. Every table is owned by auth.uid() and protected by RLS.
+create table public.profiles(id uuid primary key default gen_random_uuid(),user_id uuid not null unique default auth.uid() references auth.users on delete cascade,name text not null default '' check(char_length(name)<=80),bio text not null default '' check(char_length(bio)<=300),focus text not null default '' check(char_length(focus)<=200),saved numeric not null default 0 check(saved>=0),updated_at timestamptz not null default now());
+create table public.non_negotiables(id uuid primary key default gen_random_uuid(),user_id uuid not null default auth.uid() references auth.users on delete cascade,title text not null check(char_length(title) between 1 and 120),skip_sunday boolean not null default false,sort_order int not null default 0,created_at timestamptz not null default now());
+create table public.completions(id uuid primary key default gen_random_uuid(),user_id uuid not null default auth.uid() references auth.users on delete cascade,nn_id uuid not null references public.non_negotiables on delete cascade,date date not null,created_at timestamptz not null default now(),unique(user_id,nn_id,date));
+-- One table for every list in the UI (tasks, brain dump, events, study, projects, jobs, contacts, docs, care, milestones, learning, achievements, self, bucket list, workout log).
+create table public.items(id uuid primary key default gen_random_uuid(),user_id uuid not null default auth.uid() references auth.users on delete cascade,
+ list text not null check(list in ('todo','brain','ev','acl','prl','jb','ct','dc','sk','ms','fl','fa','al','ovl','stop','bec','bd','wl')),
+ title text not null check(char_length(title) between 1 and 200),category text,done boolean not null default false,notes text not null default '' check(char_length(notes)<=5000),url text not null default '' check(url='' or url ~* '^https?://'),
+ progress int not null default 0 check(progress between 0 and 100),due_date date,amount numeric check(amount>=0),created_at timestamptz not null default now(),updated_at timestamptz not null default now());
+create index on public.items(user_id,list);create index on public.items(user_id,due_date);
+create table public.health_daily(id uuid primary key default gen_random_uuid(),user_id uuid not null default auth.uid() references auth.users on delete cascade,date date not null,water int check(water between 0 and 8),sleep numeric check(sleep between 0 and 24),weight numeric check(weight>0),unique(user_id,date));
+create table public.journal_entries(id uuid primary key default gen_random_uuid(),user_id uuid not null default auth.uid() references auth.users on delete cascade,date date not null,mood int check(mood between 1 and 5),content text not null default '' check(char_length(content)<=20000),updated_at timestamptz not null default now(),unique(user_id,date));
+create table public.routine(id uuid primary key default gen_random_uuid(),user_id uuid not null default auth.uid() references auth.users on delete cascade,day int not null check(day between 0 and 6),title text not null default '' check(char_length(title)<=100),unique(user_id,day));
+create table public.images(id uuid primary key default gen_random_uuid(),user_id uuid not null default auth.uid() references auth.users on delete cascade,slot text not null check(char_length(slot)<=30),path text not null,unique(user_id,slot));
+do $$ declare t text; begin foreach t in array array['profiles','non_negotiables','completions','items','health_daily','journal_entries','routine','images'] loop
+ execute format('alter table public.%I enable row level security',t);
+ execute format('create policy "own rows" on public.%I for all to authenticated using(user_id=(select auth.uid())) with check(user_id=(select auth.uid()))',t);
+end loop; end $$;
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types) values('images','images',false,5242880,array['image/jpeg','image/png','image/webp']) on conflict(id) do nothing;
+create policy "own images select" on storage.objects for select to authenticated using(bucket_id='images' and (storage.foldername(name))[1]=(select auth.uid())::text);
+create policy "own images insert" on storage.objects for insert to authenticated with check(bucket_id='images' and (storage.foldername(name))[1]=(select auth.uid())::text);
+create policy "own images update" on storage.objects for update to authenticated using(bucket_id='images' and (storage.foldername(name))[1]=(select auth.uid())::text);
+create policy "own images delete" on storage.objects for delete to authenticated using(bucket_id='images' and (storage.foldername(name))[1]=(select auth.uid())::text);
